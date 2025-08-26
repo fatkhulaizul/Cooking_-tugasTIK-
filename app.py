@@ -2,46 +2,43 @@ import streamlit as st
 import google.generativeai as genai
 import os
 
-# --- KONFIGURASI APLIKASI STREAMLIT ---
-st.set_page_config(page_title="Chatbot Ahli Obat", page_icon="💊")
-
-st.title("💊 Chatbot Ahli Obat")
-st.write("Tanyakan tentang cara minum obat. Saya akan memberikan jawaban singkat dan faktual, serta menolak pertanyaan non-obat.")
-
-# --- PENGATURAN API KEY DAN MODEL ---
-
-# Ambil API Key dari Streamlit Secrets atau environment variable
-# Penting: Jangan letakkan API Key langsung di kode Anda!
-# Untuk Streamlit Cloud, Anda akan menyimpan ini di file .streamlit/secrets.toml
-# Contoh isi secrets.toml:
-# GEMINI_API_KEY = "AIzaSy..."
+# ==============================================================================
+# PENGATURAN API KEY DAN MODEL
+# ==============================================================================
+# Untuk GitHub, API Key sebaiknya disimpan di Secrets.
+# Jangan pernah hardcode API Key Anda di dalam kode yang akan diunggah ke GitHub.
 try:
-    API_KEY = os.environ.get("GEMINI_API_KEY") or st.secrets["GEMINI_API_KEY"]
+    API_KEY = st.secrets["GEMINI_API_KEY"]
 except KeyError:
-    st.error("API Key Gemini tidak ditemukan. Harap tambahkan `GEMINI_API_KEY` ke Streamlit Secrets atau environment variables Anda.")
-    st.stop() # Hentikan eksekusi aplikasi jika API Key tidak ada
+    st.error("API Key tidak ditemukan. Pastikan Anda telah menyimpan GEMINI_API_KEY di Streamlit Secrets.")
+    st.stop()
 
 MODEL_NAME = 'gemini-1.5-flash'
 
-# --- KONTEKS AWAL CHATBOT ---
+# ==============================================================================
+# KONTEKS AWAL CHATBOT
+# ==============================================================================
 INITIAL_CHATBOT_CONTEXT = [
     {
         "role": "user",
-        "parts": ["Kamu adalah ahli OBAT. Masukkan cara minum obat.Jawaban singkat dan faktual. Tolak pertanyaan non-obat."]
+        "parts": ["Kamu adalah Koki yang sangat ahli dibidangnya. Berikan user berbagai macam resep-resep makanan yang diminta!. Jawaban singkat dan faktual. Tolak pertanyaan selain yang berhubungan tentang masakan ."]
     },
     {
         "role": "model",
-        "parts": ["Baik! saya jelaskan cara minumnya!."]
+        "parts": ["Baik! Saya akan memberikan resep yang Anda inginkan."]
     }
 ]
 
-# --- FUNGSI UTAMA CHATBOT ---
+# ==============================================================================
+# FUNGSI UTAMA UNTUK MENGELOLA SESI CHAT
+# ==============================================================================
+# Mengatur konfigurasi API
+genai.configure(api_key=API_KEY)
 
-@st.cache_resource
-def configure_gemini(api_key):
-    """Mengkonfigurasi Gemini API dan menginisialisasi model."""
+@st.cache_resource(show_spinner=False)
+def get_model():
+    """Menginisialisasi model Gemini."""
     try:
-        genai.configure(api_key=api_key)
         model = genai.GenerativeModel(
             MODEL_NAME,
             generation_config=genai.types.GenerationConfig(
@@ -51,54 +48,53 @@ def configure_gemini(api_key):
         )
         return model
     except Exception as e:
-        st.error(f"Kesalahan saat mengkonfigurasi Gemini API atau menginisialisasi model: {e}")
+        st.error(f"Kesalahan saat inisialisasi model '{MODEL_NAME}': {e}")
         st.stop()
 
-model = configure_gemini(API_KEY)
+model = get_model()
 
-# Inisialisasi riwayat chat di Streamlit's session state
+# Mengatur judul halaman dan ikon
+st.set_page_config(
+    page_title="Chef Gemini - Resep Instan",
+    page_icon="🍳"
+)
+
+st.title("👨‍🍳 Chef Gemini")
+st.markdown("Halo! Saya Chef Gemini, asisten pribadi Anda untuk resep masakan. Tanyakan saja resep apa yang Anda inginkan!")
+
+# Inisialisasi riwayat chat di Streamlit Session State
+# Ini penting agar riwayat chat tidak hilang setiap kali ada interaksi.
 if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
-    # Tambahkan konteks awal ke riwayat chat hanya sekali
-    for message in INITIAL_CHATBOT_CONTEXT:
-        st.session_state.chat_history.append(message)
-    # Start the chat session with the initial context
-    st.session_state.gemini_chat = model.start_chat(history=INITIAL_CHATBOT_CONTEXT)
-else:
-    # Re-initialize the chat session with the current history
-    st.session_state.gemini_chat = model.start_chat(history=st.session_state.chat_history)
+    st.session_state.chat_history = INITIAL_CHATBOT_CONTEXT
 
+if "chat_session" not in st.session_state:
+    st.session_state.chat_session = model.start_chat(history=st.session_state.chat_history)
 
-# Tampilkan riwayat chat sebelumnya
+# Menampilkan riwayat chat
 for message in st.session_state.chat_history:
-    if message["role"] == "user":
-        st.chat_message("user").write(message["parts"][0])
-    elif message["role"] == "model" and message["parts"][0] != "Baik! saya jelaskan cara minumnya!.": # Jangan tampilkan balasan pembuka sebagai pesan model
-        st.chat_message("assistant").write(message["parts"][0])
+    with st.chat_message(message["role"]):
+        st.markdown(message["parts"][0])
 
-
-# Input pengguna
-user_input = st.chat_input("Tulis pertanyaan Anda di sini...")
-
-if user_input:
-    st.chat_message("user").write(user_input)
+# Menerima input dari pengguna
+if user_input := st.chat_input("Tulis resep yang Anda cari..."):
+    # Menambahkan input user ke riwayat chat
     st.session_state.chat_history.append({"role": "user", "parts": [user_input]})
+    
+    # Menampilkan pesan user di UI
+    with st.chat_message("user"):
+        st.markdown(user_input)
 
-    with st.spinner("Chatbot sedang berpikir..."):
-        try:
-            response = st.session_state.gemini_chat.send_message(user_input, request_options={"timeout": 60})
-
-            if response and response.text:
-                st.chat_message("assistant").write(response.text)
-                st.session_state.chat_history.append({"role": "model", "parts": [response.text]})
-            else:
-                st.chat_message("assistant").write("Maaf, saya tidak bisa memberikan balasan. Respons API kosong atau tidak valid.")
-        except Exception as e:
-            st.chat_message("assistant").write(f"Maaf, terjadi kesalahan saat berkomunikasi dengan Gemini: {e}")
-            st.chat_message("assistant").write("Kemungkinan penyebab: masalah koneksi internet, API Key tidak valid/melebihi kuota, atau masalah internal server Gemini.")
-
-# Opsional: Tombol untuk menghapus riwayat chat
-if st.button("Hapus Riwayat Chat"):
-    st.session_state.chat_history = []
-    st.session_state.gemini_chat = model.start_chat(history=INITIAL_CHATBOT_CONTEXT)
-    st.experimental_rerun()
+    # Mengirim input ke model dan mendapatkan respons
+    with st.chat_message("assistant"):
+        with st.spinner("Sedang memproses..."):
+            try:
+                response = st.session_state.chat_session.send_message(user_input, request_options={"timeout": 60})
+                
+                if response and response.text:
+                    st.markdown(response.text)
+                    # Menambahkan respons model ke riwayat chat
+                    st.session_state.chat_history.append({"role": "model", "parts": [response.text]})
+                else:
+                    st.markdown("Maaf, saya tidak bisa memberikan balasan.")
+            except Exception as e:
+                st.markdown(f"Maaf, terjadi kesalahan saat berkomunikasi dengan Gemini: {e}")
